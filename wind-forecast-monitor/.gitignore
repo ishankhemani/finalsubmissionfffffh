@@ -1,0 +1,19 @@
+# dependencies / environments
+node_modules/
+venv/
+.venv/
+# build + caches
+build/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+# local env overrides (frontend/.env is intentionally tracked: it only holds the public API URL)
+.env.local
+.env.*.local
+backend/.env
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log

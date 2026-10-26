@@ -1,0 +1,62 @@
+# Wind Forecast App — Docker Compose
+#
+# Usage:
+#   docker compose up --build          # build images and start both services
+#   docker compose up -d               # start in detached (background) mode
+#   docker compose down                # stop and remove containers
+#   docker compose logs -f backend     # tail backend logs
+#
+# Environment variables:
+#   ALLOWED_ORIGINS — comma-separated list of frontend origins the backend CORS
+#                     policy will accept. Defaults to localhost:80 (the nginx
+#                     container) plus localhost:3000 (local React dev server).
+#   REACT_APP_API_URL — URL the React build will use to reach the backend.
+#                       Defaults to http://localhost:8000 for local docker usage.
+
+services:
+
+  # ── Backend (FastAPI + uvicorn) ─────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wind-forecast-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Restrict CORS to the nginx container + local dev server.
+      # Add your Vercel URL here when deploying the frontend externally.
+      ALLOWED_ORIGINS: "http://localhost,http://localhost:3000,http://localhost:3001,http://frontend"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - wind-net
+
+  # ── Frontend (React → nginx) ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Points the compiled React bundle at the backend running in Docker.
+        # For production: replace with your Render/Heroku backend URL.
+        REACT_APP_API_URL: http://localhost:8000
+    container_name: wind-forecast-frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      backend:
+        condition: service_healthy   # waits for /health to pass before starting
+    restart: unless-stopped
+    networks:
+      - wind-net
+
+networks:
+  wind-net:
+    driver: bridge

@@ -1,0 +1,16 @@
+# Backend .dockerignore
+# Keeps the Docker build context small and avoids leaking local state
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+.env
+.env.*
+*.log
+test_*.py
+requirements-dev.txt
