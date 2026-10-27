@@ -247,3 +247,40 @@ export function forecastBasisLabel(mode, horizon, decisionTime) {
   if (mode === "horizon") return `${horizon}h lead time`;
   return `Decision ${decisionTime || "09:00"} (D-1)`;
 }
+
+/**
+ * Return the latest non-null forecast publication time across the selected rows.
+ * This is the evidence the UI can show the user about which forecast revision
+ * was actually used for the selected data slice.
+ *
+ * @param {Array<{forecast:number|null, publishTime:string|null}>} rawData
+ * @returns {string|null}
+ */
+export function getLatestForecastPublishTime(rawData) {
+  if (!Array.isArray(rawData) || rawData.length === 0) return null;
+
+  const validTimes = rawData
+    .filter((d) => d.forecast != null && d.publishTime)
+    .map((d) => new Date(d.publishTime).getTime())
+    .filter((ts) => Number.isFinite(ts));
+
+  if (validTimes.length === 0) return null;
+  return new Date(Math.max(...validTimes)).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+/**
+ * Human-friendly display for the selected forecast publication timestamp.
+ * @param {string|null} isoPublishTime
+ * @returns {string|null}
+ */
+export function formatForecastPublishTime(isoPublishTime) {
+  if (!isoPublishTime) return null;
+  return new Date(isoPublishTime).toLocaleString("en-GB", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}

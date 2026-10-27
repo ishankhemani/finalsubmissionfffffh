@@ -1,7 +1,12 @@
 import React, { useMemo, useState } from "react";
 import StatCard from "./StatCard";
 import { useWindDataContext } from "../context/WindDataContext";
-import { buildMetrics, forecastBasisLabel } from "../utils/dataTransforms";
+import {
+  buildMetrics,
+  forecastBasisLabel,
+  getLatestForecastPublishTime,
+  formatForecastPublishTime,
+} from "../utils/dataTransforms";
 
 const TOOLTIPS = {
   mae: {
@@ -76,6 +81,9 @@ function MetricsPanel() {
     ? forecastBasisLabel(metricsData.mode, metricsData.horizon, metricsData.decisionTime)
     : forecastBasisLabel(mode, horizon, decisionTime);
 
+  const latestPublishTime = getLatestForecastPublishTime(rawData ?? []);
+  const latestPublishLabel = latestPublishTime ? formatForecastPublishTime(latestPublishTime) : null;
+
   const sampleNote = nValid != null && nTotal != null
     ? `${nValid.toLocaleString()} of ${nTotal.toLocaleString()} intervals`
     : null;
@@ -99,7 +107,14 @@ function MetricsPanel() {
     <section aria-label="Forecast accuracy metrics">
       <div className="metrics-header">
         <span className="metrics-title">Accuracy Metrics</span>
-        <span className="metrics-horizon">{basisLabel}</span>
+        <div className="metrics-meta">
+          <span className="metrics-horizon">{basisLabel}</span>
+          {latestPublishLabel && (
+            <span className="metrics-publish-time">
+              Forecast published: {latestPublishLabel} UTC
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="metrics-grid">

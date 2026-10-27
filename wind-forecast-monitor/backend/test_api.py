@@ -50,6 +50,18 @@ def test_decision_mode_full_flow(client):
     assert m["mae"] > 0
 
 
+def test_decision_mode_returns_publish_time_and_daily_bias(client):
+    r = client.get("/wind-data", params=P)
+    assert r.status_code == 200
+    body = json.loads(r.text)
+    assert "publishTime" in body["records"][0]
+    assert body["records"][0]["publishTime"].startswith("2026-01-01T08:00:00Z")
+    assert "daily" in body
+    assert len(body["daily"]) == 2
+    assert body["daily"][0]["date"] == "2026-01-02"
+    assert body["daily"][0]["biasUsed"] == 0.0
+
+
 def test_horizon_mode_and_missing_forecast_is_null_not_zero(client):
     # 48h lead: forecasts were published only ~15-39h ahead -> none eligible
     r = client.get("/wind-data", params={**P, "mode": "horizon", "horizon": 48})

@@ -177,6 +177,7 @@ def _cache_headers() -> dict:
 # Maxsize: 100 raw / 50 merged — prevents unbounded memory growth.
 # Both are module-level singletons shared across all requests.
 _CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "600"))   # override via env var
+_CALIBRATION_DAYS = 7
 
 # L1: Raw BMRS API responses (independent of horizon)
 _raw_cache: BoundedTTLCache = BoundedTTLCache(maxsize=100, ttl_seconds=_CACHE_TTL)
@@ -278,7 +279,7 @@ def _fetch_and_merge(start: str, end: str, horizon: int,
       L2 hit  → return instantly (no network, no CPU).
       L2 miss → check L1 for each raw fetch, then run select_forecast + merge.
 
-    Returns a DataFrame with columns [time, actual, forecast].
+    Returns a DataFrame with columns [time, actual, forecast, publishTime].
     Raises HTTPException if actual data is unavailable.
     """
     # decision mode ignores `horizon`; horizon mode ignores `decision_time`.
@@ -295,10 +296,15 @@ def _fetch_and_merge(start: str, end: str, horizon: int,
     logger.info("L2 cache MISS — building merged %s→%s %s", start, end, merged_key)
     t0 = time.perf_counter()
 
-    # Fetch actual + forecast in parallel, each with L1 caching
+    start_dt = datetime.strptime(start, "%Y-%m-%d")
+    history_start = (start_dt - timedelta(days=_CALIBRATION_DAYS)).strftime("%Y-%m-%d")
+
+    # Fetch actual + forecast in parallel, each with L1 caching. We pull a
+    # short trailing calibration window so the planner can compute a day-ahead
+    # bias that excludes the delivery day itself.
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        future_actual   = executor.submit(_cached_fetch_actual,   start, end)
-        future_forecast = executor.submit(_cached_fetch_forecast, start, end)
+        future_actual   = executor.submit(_cached_fetch_actual,   history_start, end)
+        future_forecast = executor.submit(_cached_fetch_forecast, history_start, end)
         actual   = future_actual.result()
         forecast = future_forecast.result()
 
@@ -312,6 +318,10 @@ def _fetch_and_merge(start: str, end: str, horizon: int,
             ),
         )
 
+    warnings = []
+    if forecast.empty:
+        warnings.append("forecast_unavailable")
+
     if mode == "decision":
         selected = select_forecast_at_decision_time(actual, forecast, decision_time)
     else:
@@ -322,13 +332,16 @@ def _fetch_and_merge(start: str, end: str, horizon: int,
         selected = pd.DataFrame({
             "time": pd.Series(dtype="datetime64[ns, UTC]"),
             "forecast": pd.Series(dtype="float64"),
+            "publishTime": pd.Series(dtype="datetime64[ns, UTC]"),
         })
-    merged   = actual.merge(selected, on="time", how="left")
+    full_merged = actual.merge(selected, on="time", how="left")
     # Keep exactly the requested delivery dates [start, end] (UTC).
     lo = pd.Timestamp(start, tz="UTC")
     hi = pd.Timestamp(end, tz="UTC") + timedelta(days=1)
-    merged   = merged[(merged["time"] >= lo) & (merged["time"] < hi)]
-    merged   = merged.sort_values(by="time", ascending=True).reset_index(drop=True)
+    merged = full_merged[(full_merged["time"] >= lo) & (full_merged["time"] < hi)]
+    merged = merged.sort_values(by="time", ascending=True).reset_index(drop=True)
+    merged.attrs["daily"] = _compute_daily_bias(full_merged, start, end, calibration_days=_CALIBRATION_DAYS)
+    merged.attrs["warnings"] = warnings
 
     elapsed = time.perf_counter() - t0
     logger.info(
@@ -336,7 +349,8 @@ def _fetch_and_merge(start: str, end: str, horizon: int,
         elapsed, len(merged), start, end, merged_key,
     )
 
-    _merged_cache.set(merged_key, merged)
+    if not forecast.empty:
+        _merged_cache.set(merged_key, merged)
     return merged
 
 
@@ -379,6 +393,53 @@ def cache_stats(request: Request):
     }
 
 
+def _compute_daily_bias(merged: pd.DataFrame, start: str, end: str, calibration_days: int = 7) -> list:
+    """Compute a day-by-day trailing bias series using only prior days.
+
+    For delivery day D, calibration uses all valid paired intervals from the
+    previous `calibration_days` days and excludes D itself. If there is no valid
+    history, the day falls back to a zero bias and is labelled as such in the UI.
+    """
+    if merged.empty:
+        return []
+
+    df = merged.copy()
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    valid = df.dropna(subset=["actual", "forecast"]).copy()
+    if valid.empty:
+        start_ts = pd.Timestamp(start, tz="UTC")
+        end_ts = pd.Timestamp(end, tz="UTC")
+        dates = pd.date_range(start_ts.normalize(), end_ts.normalize(), freq="D")
+        return [{
+            "date": d.strftime("%Y-%m-%d"),
+            "biasUsed": 0.0,
+            "nCalibration": 0,
+            "forecastIssuedAt": None,
+            "calibrationFallback": True,
+        } for d in dates]
+
+    daily = []
+    start_ts = pd.Timestamp(start, tz="UTC").normalize()
+    end_ts = pd.Timestamp(end, tz="UTC").normalize()
+    for day in pd.date_range(start_ts, end_ts, freq="D"):
+        day_start = day.normalize()
+        day_end = day_start + pd.Timedelta(days=1)
+        train = valid[(valid["time"] >= day_start - pd.Timedelta(days=calibration_days)) & (valid["time"] < day_start)]
+        bias_value = float((train["forecast"] - train["actual"]).mean()) if not train.empty else 0.0
+        selected_day = valid[(valid["time"] >= day_start) & (valid["time"] < day_end)]
+        publish_at = None
+        if not selected_day.empty and selected_day["publishTime"].notna().any():
+            publish_at = selected_day["publishTime"].max().strftime("%Y-%m-%dT%H:%M:%SZ")
+        daily.append({
+            "date": day.strftime("%Y-%m-%d"),
+            "biasUsed": round(bias_value, 2) if not train.empty else 0.0,
+            "nCalibration": int(len(train)),
+            "forecastIssuedAt": publish_at,
+            "calibrationFallback": len(train) == 0,
+        })
+    return daily
+
+
 def _metrics_block(merged: pd.DataFrame, start: str, end: str, horizon: int,
                    mode: str, decision_time: str) -> dict:
     """Accuracy metrics for a merged frame.
@@ -407,8 +468,30 @@ def _metrics_block(merged: pd.DataFrame, start: str, end: str, horizon: int,
     }
 
 
+def _json_safe(value):
+    """Recursively convert NaN/Inf values to None so strict JSON encoding works."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, (np.floating, float)):
+        if pd.isna(value) or not np.isfinite(value):
+            return None
+        return float(value)
+    if isinstance(value, (np.integer, int)):
+        return int(value)
+    if isinstance(value, (np.bool_, bool)):
+        return bool(value)
+    return value
+
+
 def _json_response(request: Request, body: dict) -> Response:
     """Serialise body as strict JSON (NaN is invalid JSON) with ETag / 304 support."""
+    body = _json_safe(body)
     body_str = json.dumps(body, default=str, allow_nan=False)
     etag     = _etag(body_str)
     if request.headers.get("if-none-match") == etag:
@@ -445,10 +528,19 @@ def get_wind_data(request: Request, response: Response, start: str, end: str,
     out = merged.copy()
     out["forecast"] = out["forecast"].astype(object).where(out["forecast"].notna(), None)
     out["actual"]   = out["actual"].astype(object).where(out["actual"].notna(), None)
+    if "publishTime" in out.columns:
+        out["publishTime"] = out["publishTime"].apply(
+            lambda ts: ts.strftime("%Y-%m-%dT%H:%M:%SZ") if pd.notna(ts) else None
+        )
     out["time"] = out["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    records = out[["time", "actual", "forecast"]].to_dict(orient="records")
+    record_columns = ["time", "actual", "forecast"]
+    if "publishTime" in out.columns:
+        record_columns.append("publishTime")
+    records = out[record_columns].to_dict(orient="records")
 
     metrics = _metrics_block(merged, start, end, horizon, mode, decision_time)
+    daily = merged.attrs.get("daily", [])
+    warnings = merged.attrs.get("warnings", [])
 
     logger.info(
         "wind-data: %d rows %s→%s mode=%s coverage=%s%%",
@@ -458,6 +550,8 @@ def get_wind_data(request: Request, response: Response, start: str, end: str,
         "records":  records,
         "metrics":  metrics,
         "coverage": metrics["coverage"],
+        "daily":    daily,
+        "warnings": warnings,
     })
 
 

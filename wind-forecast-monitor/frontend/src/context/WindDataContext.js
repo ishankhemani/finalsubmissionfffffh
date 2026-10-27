@@ -96,6 +96,10 @@ const initialState = {
   // Pre-computed metrics from the combined /wind-data response.
   // Avoids re-computing in the frontend (already done server-side).
   metricsData: null,
+
+  // Daily trailing-bias metadata and warnings from the backend.
+  daily: [],
+  warnings: [],
 };
 
 // ── Action types ──────────────────────────────────────────────────────────────
@@ -140,6 +144,8 @@ function windDataReducer(state, action) {
         status:      "success",
         rawData:     action.payload.records,
         metricsData: action.payload.metrics,
+        daily:       action.payload.daily ?? [],
+        warnings:    action.payload.warnings ?? [],
         error:       null,
       };
 
@@ -244,6 +250,8 @@ export function WindDataProvider({ children }) {
       const payload = {
         records,
         metrics: body.metrics ?? null,
+        daily: body.daily ?? [],
+        warnings: body.warnings ?? [],
       };
 
       // ── 5. Store in browser cache ────────────────────────────────────────

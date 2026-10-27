@@ -30,6 +30,12 @@ const Icons = {
       <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
     </svg>
   ),
+  book: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v15H6.5A2.5 2.5 0 0 0 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  ),
   sun: (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="5"/>
@@ -57,7 +63,7 @@ const Icons = {
 };
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ theme, toggleTheme, isOpen, onClose }) {
+function Sidebar({ isOpen, onClose }) {
   return (
     <>
       {/* Overlay for mobile */}
@@ -103,15 +109,17 @@ function Sidebar({ theme, toggleTheme, isOpen, onClose }) {
             {Icons.clipboard}
             Procurement
           </NavLink>
+
+          <NavLink
+            to="/user-guide"
+            className={({ isActive }) => `sidebar-nav-item${isActive ? " active" : ""}`}
+            onClick={onClose}
+          >
+            {Icons.book}
+            User Guide
+          </NavLink>
         </nav>
 
-        {/* Theme toggle */}
-        <div className="sidebar-bottom">
-          <button className="theme-toggle" onClick={toggleTheme} type="button">
-            {theme === "dark" ? Icons.sun : Icons.moon}
-            {theme === "dark" ? "Light mode" : "Dark mode"}
-          </button>
-        </div>
       </aside>
     </>
   );
@@ -125,7 +133,9 @@ function Topbar({ onMenuClick }) {
 
   const title = location.pathname === "/procurement"
     ? "Procurement Planner"
-    : "Forecast Analysis";
+    : location.pathname === "/user-guide"
+      ? "User Guide"
+      : "Forecast Analysis";
 
   const badge = () => {
     if (status === "loading") return (
@@ -220,24 +230,103 @@ function ProcurementPage() {
   );
 }
 
+function UserGuidePage() {
+  return (
+    <div className="page-content">
+      <div className="page-header">
+        <h1 className="page-title">User Guide</h1>
+        <p className="page-subtitle">How the system works, how the forecast is selected, and how the procurement calculation is interpreted</p>
+      </div>
+
+      <div className="card card-padded">
+        <h2 className="page-title" style={{ fontSize: "1.2rem", marginBottom: "0.75rem" }}>What this tool is for</h2>
+        <p>
+          This dashboard helps a buyer understand how much wind generation is expected, how accurate the forecast was, and how much additional electricity may be needed to meet demand during a delivery period.
+        </p>
+        <ul className="proc-assump-list" style={{ marginTop: "1rem" }}>
+          <li>It combines BMRS actual generation data with BMRS forecast data.</li>
+          <li>It applies a decision-time model so the forecast reflects what was actually known when the order decision was made.</li>
+          <li>It estimates additional procurement need after accounting for forecast bias and other generation.</li>
+        </ul>
+      </div>
+
+      <div className="card card-padded">
+        <h2 className="page-title" style={{ fontSize: "1.2rem", marginBottom: "0.75rem" }}>How the flow works</h2>
+        <ol className="proc-assump-list" style={{ listStyle: "decimal", paddingLeft: "1.5rem" }}>
+          <li>Load actual wind generation from BMRS FUELHH.</li>
+          <li>Load forecast wind generation from BMRS WINDFOR.</li>
+          <li>Use the selected forecast basis to decide which forecast revisions are eligible.</li>
+          <li>Match the forecast to the actual delivery slot and calculate forecast error and bias.</li>
+          <li>Use the procurement planner to estimate demand coverage after bias correction.</li>
+        </ol>
+      </div>
+
+      <div className="card card-padded">
+        <h2 className="page-title" style={{ fontSize: "1.2rem", marginBottom: "0.75rem" }}>Decision logic</h2>
+        <p>
+          The default model is the realistic buying case: the buyer decides on the previous day at a fixed cut-off time such as 09:00. Only forecasts published before that time are eligible. If several forecasts exist for the same slot, the latest one before the cut-off is selected.
+        </p>
+        <p>
+          Horizon mode is also available for analysis, but it is a lead-time test rather than the operational day-ahead decision model.
+        </p>
+      </div>
+
+      <div className="card card-padded">
+        <h2 className="page-title" style={{ fontSize: "1.2rem", marginBottom: "0.75rem" }}>What the metrics mean</h2>
+        <ul className="proc-assump-list">
+          <li><strong>MAE:</strong> average absolute forecast error in MW.</li>
+          <li><strong>RMSE:</strong> larger misses are weighted more heavily.</li>
+          <li><strong>Bias:</strong> mean forecast error; positive values mean the forecast is too high on average.</li>
+          <li><strong>Coverage:</strong> percentage of slots with valid forecast data.</li>
+          <li><strong>Max shortfall:</strong> largest under-forecasted interval in the loaded data.</li>
+        </ul>
+      </div>
+
+      <div className="card card-padded">
+        <h2 className="page-title" style={{ fontSize: "1.2rem", marginBottom: "0.75rem" }}>Procurement calculation</h2>
+        <p>
+          The planner estimates expected wind using a bias correction and then compares it against demand and other generation. The residual is calculated as demand minus expected wind minus other generation; the requirement is the positive part of that residual.
+        </p>
+        <ul className="proc-assump-list">
+          <li><strong>Bias correction:</strong> expected wind = max(forecast − bias, 0)</li>
+          <li><strong>Residual:</strong> demand − expected wind − other generation</li>
+          <li><strong>Requirement:</strong> max(residual, 0)</li>
+          <li><strong>Surplus:</strong> max(−residual, 0)</li>
+          <li><strong>MWh conversion:</strong> each half-hour interval is 0.5 hours, so MW × 0.5 = MWh</li>
+        </ul>
+      </div>
+
+      <div className="card card-padded">
+        <h2 className="page-title" style={{ fontSize: "1.2rem", marginBottom: "0.75rem" }}>Important rule</h2>
+        <p>
+          Missing forecast values are never treated as zero wind. If a forecast is unavailable, that interval is treated as missing rather than as zero generation. This prevents the planner from incorrectly overstating the additional requirement.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Shell with theme + mobile nav ─────────────────────────────────────────────
 function AppShell() {
-  const [theme, setTheme] = useState(() =>
-    localStorage.getItem("wfm-theme") || "dark"
-  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("wfm-theme", theme);
-  }, [theme]);
+    document.documentElement.setAttribute("data-theme", "dark");
+    localStorage.setItem("wfm-theme", "dark");
+  }, []);
 
-  // Close sidebar on resize back to desktop
+  // Close sidebar on resize back to desktop. Some test environments (JSDOM)
+  // do not implement matchMedia, so guard it gracefully.
   useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
     const mq = window.matchMedia("(min-width: 861px)");
     const handler = (e) => { if (e.matches) setSidebarOpen(false); };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    if (mq.addEventListener) {
+      mq.addEventListener("change", handler);
+      return () => mq.removeEventListener("change", handler);
+    }
+    mq.addListener(handler);
+    return () => mq.removeListener(handler);
   }, []);
 
   // Close on Escape
@@ -247,7 +336,6 @@ function AppShell() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  const toggleTheme   = useCallback(() => setTheme(t => t === "dark" ? "light" : "dark"), []);
   const openSidebar   = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar  = useCallback(() => setSidebarOpen(false), []);
 
@@ -256,8 +344,6 @@ function AppShell() {
       <BrowserRouter>
         <div className="app-layout">
           <Sidebar
-            theme={theme}
-            toggleTheme={toggleTheme}
             isOpen={sidebarOpen}
             onClose={closeSidebar}
           />
@@ -266,6 +352,7 @@ function AppShell() {
             <Routes>
               <Route path="/"            element={<ForecastPage />} />
               <Route path="/procurement" element={<ProcurementPage />} />
+              <Route path="/user-guide" element={<UserGuidePage />} />
             </Routes>
           </div>
         </div>

@@ -1,19 +1,60 @@
-# dependencies / environments
+# Node / frontend
 node_modules/
-venv/
-.venv/
-# build + caches
-build/
-dist/
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+coverage/
+.npm/
+.nyc_output/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python / backend
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.so
 .pytest_cache/
-# local env overrides (frontend/.env is intentionally tracked: it only holds the public API URL)
-.env.local
-.env.*.local
-backend/.env
-# OS / editor
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+# keep the frontend public runtime config tracked if intentionally checked in
+!frontend/.env
+
+# Local runtime / caches
+*.log
+logs/
+tmp/
+temp/
+.cache/
+*.sqlite3
+*.db
+
+# OS / editor files
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
-*.log
+*.swp
+*.swo

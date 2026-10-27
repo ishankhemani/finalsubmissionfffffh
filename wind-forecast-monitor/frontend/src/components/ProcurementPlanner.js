@@ -5,7 +5,6 @@ import {
   processProcurementPlan,
   parseDemandCSV,
 } from "../utils/procurementCalcs";
-import { forecastBasisLabel } from "../utils/dataTransforms";
 import ScenarioPanel from "./ScenarioPanel";
 
 // Maximum accepted size for an uploaded demand CSV.
@@ -67,11 +66,7 @@ function normTime(t) {
  */
 function ProcurementPlanner() {
   const { state } = useWindDataContext();
-  const { rawData, metricsData, start, mode, horizon, decisionTime } = state;
-  // Describe the basis of the LOADED data (backend echoes it in metrics).
-  const basisLabel = metricsData?.mode
-    ? forecastBasisLabel(metricsData.mode, metricsData.horizon, metricsData.decisionTime)
-    : forecastBasisLabel(mode, horizon, decisionTime);
+  const { rawData, metricsData, daily, start } = state;
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [deliveryDate, setDeliveryDate]   = useState(start || "2026-01-15");
@@ -90,7 +85,12 @@ function ProcurementPlanner() {
     () => metricsData ?? buildMetrics(rawData),
     [metricsData, rawData]
   );
-  const historicalBias = metrics?.bias ?? 0;  // MW; 0 = no correction
+  const selectedDailyBias = useMemo(() => {
+    const match = Array.isArray(daily) ? daily.find((d) => d.date === deliveryDate) : null;
+    if (match) return match.biasUsed ?? 0;
+    return metrics?.bias ?? 0;
+  }, [daily, deliveryDate, metrics]);
+  const historicalBias = selectedDailyBias;
 
   // ── Wind by slot (from loaded rawData) ────────────────────────────────────
   const windBySlot = useMemo(() => {
@@ -192,47 +192,10 @@ function ProcurementPlanner() {
   const { summary } = plan;
   const hasDemand = summary.nComplete > 0 || (inputMode === "uniform" && uniformDemand !== "");
   const formatMWh = (v) => v != null ? `${Math.round(v).toLocaleString()} MWh` : "—";
-  const formatMW  = (v) => v != null ? `${Math.round(v).toLocaleString()} MW`  : "—";
-
   const biasSign = historicalBias >= 0 ? "+" : "";
-  const biasLabel = historicalBias !== 0
-    ? `${biasSign}${Math.round(historicalBias).toLocaleString()} MW (${historicalBias > 0 ? "over-forecast" : "under-forecast"})`
-    : "0 MW (no correction)";
 
   return (
     <div className="proc-page">
-
-      {/* ── Decision cutoff explainer ──────────────────────────────────── */}
-      <div className="proc-explainer card card-padded">
-        <div className="proc-explainer-header">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
-          <strong>How this works</strong>
-        </div>
-        <p>
-          The <strong>Forecast basis</strong> set on the Forecast page (<strong>{basisLabel}</strong>) acts as your
-          <strong> order deadline</strong> — only WINDFOR forecasts published before that cut-off are used.
-          This simulates what you would have known at the time of ordering.
-        </p>
-        <p style={{ marginTop: 6 }}>
-          Historical data shows the WINDFOR forecast has a mean bias of{" "}
-          <strong className={historicalBias > 0 ? "text-amber" : historicalBias < 0 ? "text-sky" : ""}>
-            {biasLabel}
-          </strong>.
-          {historicalBias > 0
-            ? " The forecast tends to over-predict wind, so less wind actually arrives. This planner deducts the bias from each forecast slot before computing your requirement."
-            : historicalBias < 0
-            ? " The forecast tends to under-predict wind, so more wind actually arrives. The bias correction adds back the deficit."
-            : " No correction is applied."
-          }
-        </p>
-        {!rawData && (
-          <p className="proc-no-data" style={{ marginTop: 8 }}>
-            ⚠ Load wind data on the <strong>Forecast</strong> page first to enable bias correction and see forecast wind values here.
-          </p>
-        )}
-      </div>
 
       {/* ── Inputs card ────────────────────────────────────────────────── */}
       <div className="card card-padded">
@@ -503,39 +466,6 @@ function ProcurementPlanner() {
             </div>
           )}
 
-          {/* Data notes */}
-          <div className="card proc-assumptions">
-            <h3 className="proc-assump-title">Data Notes</h3>
-            <ul className="proc-assump-list">
-              <li>
-                <strong>Forecast basis ({basisLabel}):</strong> Acts as your order deadline.
-                Only WINDFOR forecasts published before the cut-off are used.
-                Change the basis on the Forecast page to simulate different decision times.
-              </li>
-              <li>
-                <strong>Bias correction:</strong> Historical mean bias = {biasLabel} over the loaded period ({metrics.nValid} paired intervals).
-                Applied to every forecast slot before computing residuals. This bias is estimated
-                on the loaded period itself (in-sample), so treat it as indicative; load a range
-                that ends before your delivery date to calibrate on genuinely earlier data.
-              </li>
-              <li>
-                <strong>Missing forecasts:</strong>{" "}
-                {summary.nMissingWind > 0
-                  ? `${summary.nMissingWind} intervals have no eligible WINDFOR forecast: their requirement is not computed and they are excluded from every total (a missing forecast is never treated as zero wind).`
-                  : "All intervals have an eligible forecast."}
-              </li>
-              {inputMode === "uniform" && (
-                <li>
-                  <strong>Demand:</strong> Uniform {formatMW(parseFloat(uniformDemand) || null)} applied to all 48 intervals.
-                </li>
-              )}
-              {inputMode === "csv" && (
-                <li>
-                  <strong>Demand:</strong> Loaded from CSV ({customDemand?.length ?? 0} rows).
-                </li>
-              )}
-            </ul>
-          </div>
         </>
       )}
 

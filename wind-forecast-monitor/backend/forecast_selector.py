@@ -41,7 +41,7 @@ def select_forecast(actual_df: pd.DataFrame,
         Slots without any eligible forecast are omitted (left-joined by caller).
     """
     if actual_df.empty or forecast_df.empty:
-        return pd.DataFrame(columns=["time", "forecast"])
+        return pd.DataFrame(columns=["time", "forecast", "publishTime"])
 
     # ── 1. Coerce to UTC datetime ──────────────────────────────────────────
     actual_df   = actual_df.copy()
@@ -61,7 +61,7 @@ def select_forecast(actual_df: pd.DataFrame,
     )
 
     if merged.empty:
-        return pd.DataFrame(columns=["time", "forecast"])
+        return pd.DataFrame(columns=["time", "forecast", "publishTime"])
 
     # ── 3. Vectorised horizon filter ──────────────────────────────────────
     # cutoff(slot) = slot − horizon hours
@@ -70,7 +70,7 @@ def select_forecast(actual_df: pd.DataFrame,
     eligible = merged[merged["publishTime"] <= merged["cutoff"]].copy()
 
     if eligible.empty:
-        return pd.DataFrame(columns=["time", "forecast"])
+        return pd.DataFrame(columns=["time", "forecast", "publishTime"])
 
     # ── 4. Keep the most-recent eligible forecast per slot ────────────────
     # Sort ascending → the last row in each group is the latest publishTime.
@@ -79,7 +79,7 @@ def select_forecast(actual_df: pd.DataFrame,
         eligible
         .groupby("time", sort=False)
         .last()
-        .reset_index()[["time", "forecast"]]
+        .reset_index()[["time", "forecast", "publishTime"]]
     )
 
     return best
@@ -123,7 +123,7 @@ def select_forecast_at_decision_time(actual_df: pd.DataFrame,
     hour, minute = parse_decision_time(decision_time)
 
     if actual_df.empty or forecast_df.empty:
-        return pd.DataFrame(columns=["time", "forecast"])
+        return pd.DataFrame(columns=["time", "forecast", "publishTime"])
 
     actual_df = actual_df.copy()
     forecast_df = forecast_df.copy()
@@ -133,7 +133,7 @@ def select_forecast_at_decision_time(actual_df: pd.DataFrame,
 
     merged = forecast_df.merge(actual_df[["time"]], on="time", how="inner")
     if merged.empty:
-        return pd.DataFrame(columns=["time", "forecast"])
+        return pd.DataFrame(columns=["time", "forecast", "publishTime"])
 
     # Delivery day in UK local time -> decision datetime (local) -> UTC cutoff.
     local_naive = merged["time"].dt.tz_convert(tz).dt.tz_localize(None)
@@ -150,9 +150,9 @@ def select_forecast_at_decision_time(actual_df: pd.DataFrame,
 
     eligible = merged[merged["publishTime"] <= merged["cutoff"]].copy()
     if eligible.empty:
-        return pd.DataFrame(columns=["time", "forecast"])
+        return pd.DataFrame(columns=["time", "forecast", "publishTime"])
 
     eligible.sort_values("publishTime", inplace=True)
     return (
-        eligible.groupby("time", sort=False).last().reset_index()[["time", "forecast"]]
+        eligible.groupby("time", sort=False).last().reset_index()[["time", "forecast", "publishTime"]]
     )
