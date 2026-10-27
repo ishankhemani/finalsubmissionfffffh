@@ -1,403 +1,425 @@
 # Wind Forecast Monitor
 
-A UK wind-generation forecasting and procurement support application built around live Elexon BMRS data. The system compares actual wind output against forecast wind output, applies a decision-time selection model, and helps a buyer estimate how much additional electricity is needed after accounting for demand, wind generation, and other generation sources.
+A UK wind-generation forecasting and procurement support application built around live Elexon BMRS data. The system compares actual wind output with forecasted wind output, models a day-ahead decision window, and supports operational procurement planning by estimating residual demand, expected wind supply, and the amount of generation or balancing power that may need to be secured.
 
-This repository contains:
+This repository implements a full stack solution:
 
-- a FastAPI backend for BMRS data acquisition, validation, and API exposure
-- a React frontend for visual exploration and procurement planning
-- Docker Compose configuration for local orchestration
-- a notebook for analysis and experimentation
-- a client-facing guide in [USER_GUIDE.md](USER_GUIDE.md)
+- Python FastAPI backend for BMRS ingestion, filtering, validation, metrics, caching, and API exposure
+- React frontend for operational dashboarding, charts, and procurement planning
+- Docker Compose setup for local execution
+- analysis notebook for exploratory model work
+- client-facing guide in [USER_GUIDE.md](USER_GUIDE.md)
 
----
-
-## Project purpose
-
-This is not just a dashboard. It is a decision-support tool for operational procurement planning.
-
-The system models the real-world challenge faced by a buyer or planner:
-
-- How much wind is expected to arrive during each delivery interval?
-- What is the forecast bias compared with actual output?
-- How much demand must be served after wind and other generation are considered?
-- What is the likely procurement requirement, surplus, or net imbalance for a day?
-
-The app is designed around the commercial reality that procurement decisions are made at a known decision time, not at every individual slot independently.
+This project was developed with the support of Claude AI and Antigravity IDE to accelerate architecture work, logic refinement, code quality review, and documentation cleanup.
 
 ---
 
-## What the app does
+## Purpose
 
-### Forecast and validation layer
+This is not a generic weather dashboard. It is a decision-support tool for procurement and operational planning in a realistic D-1 market context.
 
-- pulls actual wind generation data from BMRS FUELHH
-- pulls published forecast data from BMRS WINDFOR
-- filters forecast data using decision-time logic or a fixed lead-time horizon
-- compares actual vs forecast across time slots
-- calculates key errors and accuracy metrics such as MAE, RMSE, bias, max shortfall, and coverage
+The application is designed to answer questions like:
 
-### Procurement planning layer
+- How much wind generation is expected for each 30-minute interval?
+- Which forecast is valid at the decision time, and which is too late to use?
+- How much demand remains after expected wind is considered?
+- Is there a shortfall, surplus, or near-balanced position?
+- How much energy or power should be purchased or hedged?
 
-- allows users to provide or estimate demand, wind, and other generation values
-- applies historical forecast bias correction before calculating expected wind delivery
-- calculates per-interval residuals and procurement need
-- distinguishes between missing data and zero generation so the system does not invent missing forecast values as zero wind
-- converts power values to MWh using 30-minute interval assumptions
-
-### User experience layer
-
-- charts actual vs forecast generation
-- highlights forecast error and reliability signals
-- shows the daily wind and demand summary
-- provides an operational procurement planner and a scenario summary
-- keeps business logic in pure utility functions so that it remains testable and easy to reason about
+The core principle is that planning decisions happen at a known decision time, not by taking every latest forecast as if it were available in real time.
 
 ---
 
-## System architecture
+## High-level architecture
+
+```mermaid
+flowchart TD
+    A[User] --> B[React Frontend]
+    B --> C[WindDataContext / UI state]
+    C --> D[FastAPI Backend /wind-data]
+    D --> E[Request validation]
+    E --> F[BMRS fetchers]
+    F --> G[Actual + forecast data]
+    G --> H[Forecast eligibility selector]
+    H --> I[Decision-time / horizon logic]
+    I --> J[Accuracy metrics + daily bias]
+    J --> K[JSON-safe response]
+    K --> B
+    B --> L[Charts / metrics / procurement planner]
+
+    subgraph Quality && Resilience
+        M[TTL/LRU cache]
+        N[Circuit breaker]
+        O[Rate limiting]
+        P[CORS + security guardrails]
+    end
+
+    D --> M
+    D --> N
+    D --> O
+    D --> P
+```
+
+---
+
+## System design
+
+### 1. Data layer
+
+The backend is responsible for retrieving BMRS actual generation and forecast data, normalizing it into a consistent structure, and providing a stable API contract to the frontend.
+
+This includes:
+
+- actual generation data (FUELHH)
+- published forecast data (WINDFOR)
+- time-window filtering
+- data deduplication and merging
+- JSON-safe response conversion
+
+### 2. Decision logic layer
+
+Forecast eligibility is enforced in the backend with a strict selection model.
+
+There are two modes:
+
+- decision mode: uses a fixed D-1 decision time, such as 09:00 UK time
+- horizon mode: uses a fixed lead-time horizon, such as 24 hours
+
+The key rule is that forecasts are only considered valid when they were published on or before the relevant cut-off. This prevents hindsight leakage and reflects a realistic procurement process.
+
+### 3. Business logic layer
+
+The procurement planning logic sits in the frontend utility layer rather than inside the components. This is intentional and important for quality.
+
+Core formulas include:
+
+- expected wind after bias adjustment
+- residual = demand − expected wind − other generation
+- requirement = max(residual, 0)
+- surplus = max(−residual, 0)
+- MWh conversion using 30-minute intervals
+
+This keeps the logic testable and audit-friendly.
+
+### 4. Presentation layer
+
+The front-end renders:
+
+- wind and actual series charts
+- forecast accuracy metrics
+- daily summary cards
+- interval-level procurement table
+- net requirement / surplus summary
+
+It acts as a computational UI layer, not the source of the business rules.
+
+---
+
+## Repository structure
 
 ```text
 wind-forecast-monitor/
 ├── backend/
-│   ├── main.py                       FastAPI entrypoint, routes, validation, response assembly
-│   ├── data_fetcher.py               BMRS fetch orchestration, retry logic, data shaping
-│   ├── forecast_selector.py          Forecast eligibility logic for decision-time and horizon modes
-│   ├── accuracy_metrics.py           Error metrics and scoring functions
-│   ├── cache.py                      Thread-safe TTL/LRU cache for repeated API work
-│   ├── circuit_breaker.py            Resilience wrapper around upstream dependencies
-│   ├── Dockerfile                    Backend container image
-│   ├── requirements.txt              Runtime dependencies
-│   ├── requirements-dev.txt          Dev and test dependencies
-│   ├── test_api.py                   API tests
-│   ├── test_decision_time.py         Decision-time and horizon selection tests
-│   ├── test_accuracy_metrics.py      Accuracy metric tests
-│   ├── test_cache.py                 Cache tests
-│   ├── test_circuit_breaker.py       Circuit-breaker tests
-│   ├── test_forecast_selector.py     Forecast selection validation
-│   └── test_decision_time.py         Additional decision logic checks
+│   ├── accuracy_metrics.py
+│   ├── cache.py
+│   ├── circuit_breaker.py
+│   ├── data_fetcher.py
+│   ├── Dockerfile
+│   ├── forecast_selector.py
+│   ├── main.py
+│   ├── requirements-dev.txt
+│   ├── requirements.txt
+│   ├── test_accuracy_metrics.py
+│   ├── test_api.py
+│   ├── test_cache.py
+│   ├── test_circuit_breaker.py
+│   ├── test_decision_time.py
+│   ├── test_forecast_selector.py
+│   └── test_api.py
 │
 ├── frontend/
-│   ├── Dockerfile                    Front-end runtime container
-│   ├── nginx.conf                    Nginx configuration for production static serving
-│   ├── package.json                  Frontend package and scripts
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   ├── package.json
+│   ├── build/
+│   │   ├── asset-manifest.json
+│   │   ├── index.html
+│   │   ├── manifest.json
+│   │   ├── robots.txt
+│   │   └── static/
+│   │       ├── css/
+│   │       └── js/
 │   ├── public/
-│   ├── src/
-│   │   ├── App.js                    Main shell, routes, and overall layout
-│   │   ├── components/               UI sections: header, panels, planner, chart blocks
-│   │   ├── context/
-│   │   │   └── WindDataContext.js    Global data provider and reducer-based state
-│   │   ├── utils/
-│   │   │   ├── dataTransforms.js     Data reshaping and chart preparation
-│   │   │   ├── procurementCalcs.js   Core business logic for residuals and procurement
-│   │   │   └── ... tests
-│   │   ├── index.js
-│   │   ├── App.css
-│   │   ├── index.css
-│   │   └── setupTests.js
-│   └── build/                       Production build output (generated)
+│   │   ├── index.html
+│   │   ├── manifest.json
+│   │   └── robots.txt
+│   └── src/
+│       ├── App.css
+│       ├── App.js
+│       ├── App.test.js
+│       ├── index.css
+│       ├── index.js
+│       ├── reportWebVitals.js
+│       ├── setupTests.js
+│       ├── components/
+│       │   ├── ControlPanel.js
+│       │   ├── ErrorBanner.js
+│       │   ├── ErrorChart.js
+│       │   ├── Header.js
+│       │   ├── LoadingState.js
+│       │   ├── MetricsPanel.js
+│       │   ├── ProcurementPlanner.js
+│       │   ├── ScenarioPanel.js
+│       │   ├── StatCard.js
+│       │   └── WindChart.js
+│       ├── context/
+│       │   ├── WindDataContext.js
+│       │   └── WindDataContext.test.js
+│       └── utils/
+│           ├── dataTransforms.js
+│           ├── dataTransforms.test.js
+│           ├── procurementCalcs.js
+│           └── procurementCalcs.test.js
 │
 ├── analysis/
-│   └── forecast_analysis.ipynb      Exploratory analysis notebook
-├── docker-compose.yml                Local orchestration for backend and frontend
-├── USER_GUIDE.md                     Client-facing explanation and methodology guide
+│   └── forecast_analysis.ipynb
+├── docker-compose.yml
 ├── LICENSE
 ├── README.md
-└── .gitignore
+├── USER_GUIDE.md
+├── .gitignore
+└── .venv/
 ```
 
 ---
 
-## Layered design
+## Core feature map
 
-### 1. Data ingestion
+### Forecast monitoring
 
-The backend reads BMRS information from upstream Elexon services. It normalizes the payload into a consistent internal model so the rest of the application can reason about one data contract instead of several provider-specific shapes.
+The backend merges actual generation with forecast data and returns a normalized time series for each requested day or date range.
 
-### 2. Forecast selection
+Features include:
 
-Before the app compares actual and forecast values, it chooses which forecast is eligible.
+- actual vs forecast comparison
+- item-level time alignment
+- missing-value handling
+- date-range validation
+- publishing-time filtering
 
-Key idea:
+### Decision-time forecast selection
 
-- a buyer does not choose a forecast slot-by-slot in a vacuum
-- the procurement decision is made at a known decision time
-- therefore, the model works with the latest eligible forecast before the cutoff
+This is one of the most important parts of the business logic.
 
-This is enforced by the logic in `backend/forecast_selector.py` and validated in the test suite.
+At a fixed local time, the system decides which forecast is eligible for the delivery day. This matches the practical procurement model used in day-ahead decisioning.
 
-### 3. Metric computation
+Rules:
 
-The app computes aggregate quality indicators such as:
+- same decision-time cutoff for all half-hour slots in a delivery day
+- only forecasts published on or before the cutoff are eligible
+- latest eligible forecast wins
+- future data is excluded from the decision process
 
-- MAE
-- RMSE
+### Accuracy metrics
+
+The backend computes accuracy metrics such as:
+
+- mean absolute error (MAE)
+- root mean squared error (RMSE)
 - forecast bias
-- max shortfall
-- coverage metrics
+- coverage
+- maximum shortfall
+- number of valid observations
 
-This data is exposed via the backend API and displayed in the frontend for the analysis screen.
+These are used for operational diagnosis and model quality checks.
 
-### 4. Procurement planning
+### Procurement planner
 
-The procurement planner uses a separate pure logic layer in `frontend/src/utils/procurementCalcs.js` to compute:
+The planner allows a user to define a demand profile and evaluate the likely needs after accounting for wind generation and other sources.
 
-- residual = demand − expected wind − other generation
-- requirement = max(residual, 0)
-- surplus = max(−residual, 0)
-- MWh totals for 30-minute intervals
+It calculates:
 
-This keeps the financial logic independent from UI rendering and makes it easier to validate with unit tests.
+- expected wind by interval
+- residual energy or power gap
+- requirement and surplus
+- daily net position
+- interval-level requirement values
 
-### 5. Presentation and interaction
+The output is structured to reflect real operational actions without hiding where shortfalls or surpluses occur.
 
-The React app uses a provider-based state model to keep the data flow simple:
+### Missing values safeguard
 
-- the backend fetches and returns a merged dataset
-- the provider stores that dataset in context
-- the UI reads from that state and renders charts, metrics, and the procurement planner
+The system makes a deliberate decision to preserve missing values rather than replacing them with zero.
+
+This is strategically important because treating missing wind as zero can easily create false procurement signals and distort the model.
 
 ---
 
-## Key engineering decisions
+## How the business logic works
 
-### 1. Decision-time logic instead of raw latest forecast
+### 1. Data fetch and normalization
 
-This is a core design choice.
+The backend requests:
 
-The app does not simply take the most recent forecast on the delivery day. Instead, it models a real procurement decision:
+- actual wind generation from BMRS FUELHH
+- published forecast sets from BMRS WINDFOR
 
-- each delivery day is evaluated with a decision deadline
-- only forecasts published on or before the cutoff are valid
-- within that decision window, the latest eligible forecast is chosen
+The data is standardized to a consistent UTC timestamp-based structure and merged by delivery slot.
+
+### 2. Forecast selection by cutoff
+
+Each forecast row has:
+
+- target time
+- publishTime
+- forecast value
+
+The selection logic determines whether a given forecast is eligible using a time cutoff, not by a simple latest-value rule.
+
+In decision mode:
+
+- the buyer has a decision time on D-1
+- the cutoff is calculated for the full delivery day
+- every slot shares the same decision checkpoint
+
+This is more realistic than a per-slot lead-time model because a choice is made at a single operational moment.
+
+### 3. Bias calculation
+
+The system calculates a day-by-day bias using trailing historical data while excluding the current delivery day itself.
+
+The key rule is:
+
+- bias is measured only on information that was available at the decision checkpoint
+- future values after the cutoff are not used in the calibration set
+
+This prevents a hidden look-ahead effect in the estimate.
+
+### 4. Residual and requirement calculation
+
+For each interval, the logic then evaluates:
+
+- demand
+- expected wind
+- other generation
+- residual gap
+
+When residual is positive, the system indicates a shortfall or requirement. When residual is negative, it indicates surplus.
+
+This is done at interval resolution and summarized at the daily level.
+
+### 5. MWh conversion
+
+Since the market and delivery intervals are based on 30-minute blocks, power values are converted into MWh using:
+
+- MWh = MW × 0.5 hours
+
+That means each half-hour interval contributes a standardized energy value.
+
+---
+
+## Engineering decisions and quality practices
+
+### Caching strategy
+
+The backend uses a two-layer in-memory cache:
+
+- L1 raw fetch cache: stores BMRS responses by date range
+- L2 merged result cache: stores the merged + filtered result for a repeated request
 
 Why this matters:
 
-- it matches operational practice
-- it prevents hindsight bias
-- it avoids using a forecast that was not yet available at the decision point
+- repeated UI calls do not hit BMRS unnecessarily
+- the expensive merge and selection operations are avoided for identical requests
+- performance remains stable during repeated dashboard interaction
 
-### 2. Missing forecast values are treated as missing, not zero
+The cache is bounded with TTL and LRU behavior to avoid memory blow-up.
 
-This is a critical safety rule.
+### Circuit breakers
 
-If the wind forecast is unavailable for an interval, the system does not substitute zero generation. That would artificially increase the apparent requirement and create a false procurement signal.
+The system wraps BMRS fetches with circuit-breaker logic.
 
-This is a deliberate business decision to avoid overstating need in uncertain periods.
+This helps when upstream services are failing, slow, or unstable. Instead of collapsing under repeated retries, the service enters a fail-safe mode and returns predictable degraded behaviour.
 
-### 3. Bias correction is applied before residual calculation
+### Rate limiting
 
-The project explicitly assumes that historical forecast bias affects expected actual wind output.
+The API uses rate limiting to avoid abuse and to protect upstream BMRS services from being overwhelmed by repeated requests.
 
-The logic is:
+Key protection points:
 
-- bias = mean(forecast − actual)
-- expected wind = max(forecast − bias, 0)
+- per-client limit
+- global limit backstop
+- forwarded-IP handling for proxied deployment environments
 
-This is designed to account for systematic over-forecasting or under-forecasting.
+This is important for both service resilience and operational stability.
 
-### 4. Summary metric and interval-level metric are separated
+### CORS and security boundary
 
-The app keeps both views available:
+The backend is configured with explicit CORS rules and request validation. This prevents unintended cross-origin access and keeps the public API boundary controlled.
 
-- interval decomposition: shows where each slot is short or surplus
-- net daily balance: shows the operational position for procurement decisions
+### JSON-safe responses
 
-This is important because a day can have some shortfall intervals and some surplus intervals at the same time. A summary that tries to treat those as mutually exclusive can be misleading.
+The backend sanitizes output before sending it to the frontend. This prevents NaN and invalid JSON values from causing runtime errors in the browser or downstream systems.
 
-### 5. Pure functions for business logic
+### Graceful degradation
 
-Most procurement calculations live in frontend utility functions instead of UI components.
+When critical data is missing, the app does not silently invent values.
 
-This keeps the logic:
+Instead it:
 
-- easy to test
-- easy to review
-- safe to refactor
-- independent from rendering details
+- keeps values as missing where appropriate
+- marks unavailable forecast data
+- preserves data integrity
+- avoids false zero substitutions
 
-### 6. Resilience over raw network calls
+This is a major operational safety pattern in the codebase.
 
-The backend includes:
+### Separation of concerns
 
-- retries
-- circuit breakers
-- caching
-- guardrails for empty or invalid response payloads
+The system is intentionally split into:
 
-This matters because BMRS data can be incomplete or slow, and production systems need predictable failover and clean error states.
+- backend data orchestration
+- forecasting logic
+- business logic utilities
+- React components
+- data context and state management
 
----
-
-## Data flow in practice
-
-```text
-User selects date / mode / decision time
-        ↓
-Frontend requests /wind-data from backend
-        ↓
-Backend validates request parameters
-        ↓
-Forecast selector decides eligible forecast set
-        ↓
-Data fetcher retrieves actual + forecast series
-        ↓
-Accuracy metrics are computed
-        ↓
-Merged dataset is returned as JSON
-        ↓
-Frontend renders charts, metrics, and procurement plan
-```
-
-The actual architecture is intentionally split into:
-
-- API and upstream logic in Python
-- planning logic in pure JavaScript utilities
-- display in React components
-
-This split improves validation and makes the model easier to audit.
+This makes the system easier to reason about, test, and extend.
 
 ---
 
-## API overview
+## Performance and optimization notes
 
-The backend exposes the main endpoints below.
+### Vectorized pandas logic
 
-### Health and diagnostics
+Forecast selection is implemented using pandas operations rather than nested Python loops. This is substantially faster and more stable for multi-day ranges.
 
-- `GET /health` — verifies the backend is running and reports system health
-- `GET /cache-stats` — returns cache and circuit-breaker operational stats
+Benefits:
 
-### Data endpoints
+- lower CPU cost
+- predictable behaviour on larger date windows
+- easier maintainability
+- reduced risk of N+1 style computational patterns
 
-- `GET /wind-data` — main endpoint for forecast + actual + metrics payload
-- `GET /metrics` — service-level metrics response for analysis screens
+### Parallel fetch logic
 
-### Query parameters
+The backend fetches actual and forecast data in parallel when needed. This shortens latency when multiple upstream requests are required.
 
-Depending on the mode, the API accepts:
+### Frontend state design
 
-- `start` and `end` dates
-- `mode=decision` or `mode=horizon`
-- `decision_time` for D-1 decision cutoff logic
-- `horizon` for fixed lead-time mode
+The React app uses a provider and reducer-based model rather than a heavier state framework. This keeps the UI simple while still supporting proper state transitions for loading, error, and successful fetch states.
 
-### Example calls
+### Static frontend build
 
-```bash
-curl "http://localhost:8000/health"
-curl "http://localhost:8000/wind-data?start=2026-01-02&end=2026-01-08&mode=decision&decision_time=09:00"
-curl "http://localhost:8000/wind-data?start=2026-01-02&end=2026-01-08&mode=horizon&horizon=24"
-```
+The frontend is prepared as a production static build and can be served through a lightweight static host or reverse proxy.
 
 ---
 
-## Core file knowledge
+## Local execution
 
-### Backend
+### Option 1: Local Python + React
 
-#### `backend/main.py`
-
-This is the main API layer. It is responsible for:
-
-- request validation
-- data fetch orchestration
-- applying response sanitization
-- serving the merged data payload
-- coordinating cache and circuit-breaker behaviour
-- exposing JSON-safe payloads for frontend consumption
-
-#### `backend/forecast_selector.py`
-
-This file defines the forecast eligibility logic.
-
-It decides whether a published forecast is valid according to:
-
-- decision-time selection
-- fixed horizon selection
-- publication time eligibility
-
-This is the most important logic for representing a real operating decision process.
-
-#### `backend/data_fetcher.py`
-
-This reads upstream BMRS data and normalizes it into a consistent set of records.
-
-It is responsible for:
-
-- request execution
-- error recovery
-- deduplication and time window extraction
-- data shaping before response assembly
-
-#### `backend/accuracy_metrics.py`
-
-This computes accuracy metrics for actual vs forecast performance.
-
-It is used for error diagnostics and for comparing how effective the forecast is over a chosen period.
-
-#### `backend/cache.py`
-
-This implements a bounded in-memory cache.
-
-It keeps repeated requests efficient while preventing unbounded memory growth.
-
-#### `backend/circuit_breaker.py`
-
-This is the resilience layer for upstream calls.
-
-It protects the service from repeated failures when BMRS is slow or temporarily unavailable.
-
-### Frontend
-
-#### `frontend/src/context/WindDataContext.js`
-
-This is the central state provider.
-
-It is responsible for:
-
-- fetching the data from the backend
-- maintaining app state
-- managing loading and error states
-- exposing the data to the rest of the React application
-
-#### `frontend/src/utils/procurementCalcs.js`
-
-This is the most important business logic file.
-
-It contains:
-
-- `applyBiasCorrection`
-- `calcResidual`
-- `calcRequirement`
-- `calcSurplus`
-- `calcMWh`
-- `processProcurementPlan`
-
-This file is the canonical source of the procurement logic. It is intentionally kept pure so it can be tested independently of the UI.
-
-#### `frontend/src/components/ProcurementPlanner.js`
-
-This is the user-facing planner component.
-
-It renders:
-
-- total demand
-- expected wind delivery
-- demand vs wind gap
-- requirement/surplus cards
-- interval-level detail table
-- explanatory notes for missing forecast slots
-
-#### `frontend/src/App.js`
-
-This defines the overall app shell, navigation, and route structure.
-
----
-
-## Local development
-
-### Backend
+#### Backend
 
 ```bash
 cd backend
@@ -407,12 +429,7 @@ pip install -r requirements-dev.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Then open:
-
-- http://localhost:8000
-- http://localhost:8000/docs
-
-### Frontend
+#### Frontend
 
 ```bash
 cd frontend
@@ -422,20 +439,24 @@ npm start
 
 Then open:
 
-- http://localhost:3000
+- backend: http://localhost:8000
+- frontend: http://localhost:3000
+- Swagger docs: http://localhost:8000/docs
 
-### Using Docker Compose
+### Option 2: Docker Compose
+
+From the project root:
 
 ```bash
 docker compose up --build
 ```
 
-The stack exposes:
+Then open:
 
 - backend: http://localhost:8000
 - frontend: http://localhost:3001
 
-Useful commands:
+Useful docker commands:
 
 ```bash
 docker compose down
@@ -446,9 +467,7 @@ docker compose ps
 
 ---
 
-## Environment variables
-
-The app depends on a small number of runtime variables.
+## Environment configuration
 
 ### Frontend
 
@@ -456,107 +475,104 @@ The app depends on a small number of runtime variables.
 REACT_APP_API_URL=http://127.0.0.1:8000
 ```
 
-This should point to the backend origin used by the frontend application.
-
 ### Backend
-
-The backend should allow the frontend origin via CORS configuration, usually through an environment variable such as:
 
 ```bash
 ALLOWED_ORIGINS=http://localhost:3000,https://your-frontend-domain.com
+RATE_LIMIT=30/minute
+GLOBAL_RATE_LIMIT=300/minute
+CACHE_TTL_SECONDS=600
+TRUSTED_PROXY_COUNT=0
 ```
 
-This is important for production deployment and browser-based cross-origin requests.
+Important note:
+
+- do not append a trailing slash to the backend origin in production
+- the app should use a clean origin such as `https://api.example.com`, not `https://api.example.com/`
 
 ---
 
 ## Testing
 
-### Backend
+### Backend test suite
 
 ```bash
 cd backend
 source .venv/bin/activate
-pytest -q
+python -m pytest -q
 ```
 
-Key areas covered:
+Covered areas include:
 
-- data-fetch validation
-- forecast selection logic
-- D-1 decision cutoff rules
-- metrics accuracy
+- validation logic
+- forecast selector correctness
+- D-1 cutoff logic
+- metrics correctness
 - cache behaviour
-- circuit-breaker protection
+- circuit-breaker failure handling
+- API response safety
 
-### Frontend
+### Frontend tests
 
 ```bash
 cd frontend
 CI=true npm test -- --watch=false --runInBand
 ```
 
-The frontend tests cover the procurement helpers and core logic that drive the planner summary.
+The frontend unit tests cover the procurement utility layer and key transformation logic.
 
 ---
 
 ## Deployment guidance
 
-This project is designed to be deployable in a standard split-stack pattern.
+Recommended stack:
 
-### Recommended production split
+- Frontend: Vercel
+- Backend: Render, Railway, or another Python container host
 
-- Frontend: Vercel / static hosting
-- Backend: Render / Railway / a Python container host
+Production requirements:
 
-### Required configuration
+- set `REACT_APP_API_URL` to the deployed backend origin
+- configure backend `ALLOWED_ORIGINS` for the frontend domain
+- keep the backend behind a managed proxy if necessary
+- ensure HTTP and HTTPS settings are consistent
 
-- set frontend `REACT_APP_API_URL` to the deployed backend URL
-- set backend CORS allowed origins to the frontend domain
-- ensure no trailing `/` is accidentally appended to the API base URL
-
-A common production bug is having a double path such as:
-
-```text
-https://frontend-domain.com//wind-data
-```
-
-This can happen when an API URL string ends with a trailing slash. The value should be the clean origin only.
+This project is built in a split-stack pattern so it is straightforward to deploy with standard modern cloud tooling.
 
 ---
 
-## Important operational assumptions
+## Known strengths
 
-- BMRS is the upstream source of truth for actual and forecast data
-- demand and other generation values are user-entered inputs
-- the system assumes 30-minute intervals for power-to-energy conversion
-- data gaps are not treated as zero output unless explicitly defined by the user
-- forecast eligibility is tied to publication time and decision cutoff, not simply to the latest available value
-
----
-
-## Known project strengths
-
-- clear separation between data layer, business logic, and UI
-- strong validation around forecasting decision logic
-- pure business logic that is testable without UI dependencies
-- explicit handling of missing data rather than silently forcing zero values
-- resilience patterns around upstream BMRS failures
+- realistic D-1 decision-time model
+- strict forecast publication cutoff
+- missing-data handling that avoids false zero assumptions
+- clear separation between API, forecasting logic, and presentation
+- resilience patterns for upstream outage scenarios
+- isolated business logic for testability and auditability
+- production-friendly deployment structure
 
 ---
 
-## Limitations and future extension opportunities
+## Current limitations
 
-- no authentication or role-based access control currently implemented
-- live BMRS access depends on upstream availability and network access
-- some client-specific assumptions are encoded as business configuration rather than dynamic generalization
-- the planner is optimized for a single decision-time procurement workflow and can be extended to more advanced portfolio scenarios later
+- no authentication or user roles are implemented
+- CI/CD is not yet fully packaged as a production pipeline
+- BMRS reliance means downstream performance depends on upstream service behaviour
+- the planner is tuned for operational procurement workflow rather than generalized portfolio optimization
+
+---
+
+## AI-assisted development note
+
+This project was developed with the support of Claude AI for code reasoning, architecture validation, logic review, and documentation refinement, and used Antigravity IDE as the development environment for iterative edits and validation.
+
+This does not change the engineering intent of the codebase; it simply accelerated the design, debugging, audit, and documentation cycles.
 
 ---
 
 ## User guide
 
-For a client-friendly explanation of how the model works, see [USER_GUIDE.md](USER_GUIDE.md).
+For a client-friendly explanation of the business logic and procurement view, see [USER_GUIDE.md](USER_GUIDE.md).
 
 ---
 
@@ -564,10 +580,11 @@ For a client-friendly explanation of how the model works, see [USER_GUIDE.md](US
 
 This project combines:
 
-- BMRS forecast validation
-- real decision-time forecast selection
-- bias-corrected wind estimation
-- demand and supply forecasting for procurement planning
-- a clean split between backend logic, frontend UI, and testable calculation utilities
+- live BMRS actual and forecast ingestion
+- realistic D-1 decision-time logic
+- operational bias correction and missing-data safeguards
+- backend resilience primitives like caching, circuit breakers, and rate limits
+- a clean split between business logic, API logic, and UI rendering
+- a testable and audit-friendly architecture for procurement and forecasting decisions
 
-It is designed to support a practical operational decision: how much additional power needs to be secured after considering expected wind and other available generation.
+It is designed to support a practical question: after accounting for wind, demand, and other visible generation, how much additional power must be secured at the decision point?
