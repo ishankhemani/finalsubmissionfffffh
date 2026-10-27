@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import { WindDataProvider, useWindDataContext } from "./context/WindDataContext";
 import { buildChartData, forecastBasisLabel } from "./utils/dataTransforms";
 import ControlPanel from "./components/ControlPanel";
@@ -129,13 +129,6 @@ function Sidebar({ isOpen, onClose }) {
 function Topbar({ onMenuClick }) {
   const { state } = useWindDataContext();
   const { status, start, end } = state;
-  const location = useLocation();
-
-  const title = location.pathname === "/procurement"
-    ? "Procurement Planner"
-    : location.pathname === "/user-guide"
-      ? "User Guide"
-      : "Forecast Analysis";
 
   const badge = () => {
     if (status === "loading") return (
@@ -167,7 +160,6 @@ function Topbar({ onMenuClick }) {
       >
         {Icons.menu}
       </button>
-      <span className="topbar-title">{title}</span>
       {badge()}
     </header>
   );
