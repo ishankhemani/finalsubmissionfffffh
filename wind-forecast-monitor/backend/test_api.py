@@ -62,6 +62,36 @@ def test_decision_mode_returns_publish_time_and_daily_bias(client):
     assert body["daily"][0]["biasUsed"] == 0.0
 
 
+def test_daily_bias_respects_decision_cutoff():
+    merged = pd.DataFrame({
+        "time": pd.to_datetime([
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T08:00:00Z",
+            "2026-01-01T10:00:00Z",
+            "2026-01-02T00:00:00Z",
+        ], utc=True),
+        "actual": [100.0, 100.0, 100.0, 100.0],
+        "forecast": [100.0, 100.0, 200.0, 100.0],
+        "publishTime": pd.to_datetime([
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T08:00:00Z",
+            "2026-01-01T10:00:00Z",
+            "2026-01-02T00:00:00Z",
+        ], utc=True),
+    })
+
+    daily = main._compute_daily_bias(
+        merged,
+        start="2026-01-02",
+        end="2026-01-02",
+        calibration_days=7,
+        decision_time="09:00",
+    )
+
+    assert daily[0]["biasUsed"] == 0.0
+    assert daily[0]["nCalibration"] == 2
+
+
 def test_horizon_mode_and_missing_forecast_is_null_not_zero(client):
     # 48h lead: forecasts were published only ~15-39h ahead -> none eligible
     r = client.get("/wind-data", params={**P, "mode": "horizon", "horizon": 48})

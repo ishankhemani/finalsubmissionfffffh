@@ -340,7 +340,13 @@ def _fetch_and_merge(start: str, end: str, horizon: int,
     hi = pd.Timestamp(end, tz="UTC") + timedelta(days=1)
     merged = full_merged[(full_merged["time"] >= lo) & (full_merged["time"] < hi)]
     merged = merged.sort_values(by="time", ascending=True).reset_index(drop=True)
-    merged.attrs["daily"] = _compute_daily_bias(full_merged, start, end, calibration_days=_CALIBRATION_DAYS)
+    merged.attrs["daily"] = _compute_daily_bias(
+        full_merged,
+        start,
+        end,
+        calibration_days=_CALIBRATION_DAYS,
+        decision_time=decision_time,
+    )
     merged.attrs["warnings"] = warnings
 
     elapsed = time.perf_counter() - t0
@@ -393,18 +399,22 @@ def cache_stats(request: Request):
     }
 
 
-def _compute_daily_bias(merged: pd.DataFrame, start: str, end: str, calibration_days: int = 7) -> list:
-    """Compute a day-by-day trailing bias series using only prior days.
+def _compute_daily_bias(merged: pd.DataFrame, start: str, end: str,
+                       calibration_days: int = 7,
+                       decision_time: str = "09:00") -> list:
+    """Compute a day-by-day trailing bias series using only information known at the D-1 decision cutoff.
 
-    For delivery day D, calibration uses all valid paired intervals from the
-    previous `calibration_days` days and excludes D itself. If there is no valid
-    history, the day falls back to a zero bias and is labelled as such in the UI.
+    For delivery day D, training data must be limited to the previous
+    `calibration_days` days and to intervals whose slot time was already in the
+    past at the decision checkpoint for day D. This prevents the daily bias from
+    using future actuals that were not available when the D-1 decision was made.
     """
     if merged.empty:
         return []
 
     df = merged.copy()
     df["time"] = pd.to_datetime(df["time"], utc=True)
+    df["publishTime"] = pd.to_datetime(df["publishTime"], utc=True)
     valid = df.dropna(subset=["actual", "forecast"]).copy()
     if valid.empty:
         start_ts = pd.Timestamp(start, tz="UTC")
@@ -418,13 +428,28 @@ def _compute_daily_bias(merged: pd.DataFrame, start: str, end: str, calibration_
             "calibrationFallback": True,
         } for d in dates]
 
+    hour, minute = parse_decision_time(decision_time)
     daily = []
     start_ts = pd.Timestamp(start, tz="UTC").normalize()
     end_ts = pd.Timestamp(end, tz="UTC").normalize()
     for day in pd.date_range(start_ts, end_ts, freq="D"):
         day_start = day.normalize()
         day_end = day_start + pd.Timedelta(days=1)
-        train = valid[(valid["time"] >= day_start - pd.Timedelta(days=calibration_days)) & (valid["time"] < day_start)]
+
+        # Same D-1 decision cutoff logic as the forecast selector: every slot in
+        # delivery day D shares the same cutoff at D-1 at the fixed local time.
+        local_day = day_start.tz_convert("Europe/London")
+        decision_local = (
+            local_day.normalize() - pd.Timedelta(days=1)
+            + pd.Timedelta(hours=hour, minutes=minute)
+        )
+        decision_cutoff = decision_local.tz_convert("UTC")
+
+        train = valid[
+            (valid["time"] >= day_start - pd.Timedelta(days=calibration_days))
+            & (valid["time"] < day_start)
+            & (valid["time"] < decision_cutoff)
+        ]
         bias_value = float((train["forecast"] - train["actual"]).mean()) if not train.empty else 0.0
         selected_day = valid[(valid["time"] >= day_start) & (valid["time"] < day_end)]
         publish_at = None
