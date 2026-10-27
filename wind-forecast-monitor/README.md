@@ -528,7 +528,14 @@ The frontend unit tests cover the procurement utility layer and key transformati
 Recommended stack:
 
 - Frontend: Vercel
-- Backend: Render, Railway, or another Python container host
+- Backend: Render free tier, Railway, or another Python container host
+
+Render deployment note:
+
+- the backend can be deployed on Render using a Python service or container
+- on the free tier, the service may cold-start and can take roughly 20–30 seconds to respond on the first request after inactivity
+- this is normal on free-tier hosting and should be accounted for when testing the live deployment
+- after the first wake-up request, the service usually responds faster until the next idle period
 
 Production requirements:
 
