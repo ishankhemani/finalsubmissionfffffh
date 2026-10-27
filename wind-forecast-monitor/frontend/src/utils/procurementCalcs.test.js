@@ -216,6 +216,26 @@ describe("processProcurementPlan", () => {
     expect(summary.nMissingWind).toBe(1);
   });
 
+  test("net daily balance keeps the business-facing procurement answer separate from interval decomposition", () => {
+    const mixed = [
+      { time: "T1", demand: 20000, wind: 15000, other: 0 },
+      { time: "T2", demand: 10000, wind: 20000, other: 0 },
+      { time: "T3", demand: 15000, wind: 8000, other: 0 },
+    ];
+
+    const { summary } = processProcurementPlan(mixed, 0);
+
+    // interval decomposition remains valid and can show both requirement and surplus
+    // Energy totals are MWh, so each 30-minute slot contributes × 0.5h
+    expect(summary.totalRequirementMWh).toBeCloseTo(6000);
+    expect(summary.totalSurplusMWh).toBeCloseTo(5000);
+
+    // but the net position is what a procurement decision should use
+    expect(summary.netResidualMWh).toBeCloseTo(1000);
+    expect(summary.netRequirementMWh).toBeCloseTo(1000);
+    expect(summary.netSurplusMWh).toBeCloseTo(0);
+  });
+
   test("biasApplied is recorded in summary", () => {
     const { summary } = processProcurementPlan(baseIntervals, 1500);
     expect(summary.biasApplied).toBe(1500);

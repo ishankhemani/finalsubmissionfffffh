@@ -376,18 +376,26 @@ function ProcurementPlanner() {
             </div>
 
             <div className="proc-summary-card proc-summary-card--req">
-              <div className="proc-sum-label">Additional Requirement</div>
-              <div className="proc-sum-value">{formatMWh(summary.totalRequirementMWh)}</div>
+              <div className="proc-sum-label">
+                {summary.netRequirementMWh > 0 ? "Net Requirement" : summary.netSurplusMWh > 0 ? "Net Surplus" : "Net Position"}
+              </div>
+              <div className="proc-sum-value">
+                {formatMWh(Math.max(summary.netRequirementMWh, summary.netSurplusMWh))}
+              </div>
               <div className="proc-sum-sub">
-                Demand − Expected Wind − Other
+                {summary.netRequirementMWh > 0
+                  ? "Daily shortfall after wind and other generation"
+                  : summary.netSurplusMWh > 0
+                    ? "Daily surplus after wind and other generation"
+                    : "Balanced across matched intervals"}
               </div>
             </div>
 
             {summary.totalSurplusMWh > 0 && (
               <div className="proc-summary-card proc-summary-card--surplus">
-                <div className="proc-sum-label">Potential Surplus</div>
+                <div className="proc-sum-label">Interval Surplus</div>
                 <div className="proc-sum-value">{formatMWh(summary.totalSurplusMWh)}</div>
-                <div className="proc-sum-sub">Wind + other exceeds demand</div>
+                <div className="proc-sum-sub">Positive residual hours across matched intervals</div>
               </div>
             )}
           </div>

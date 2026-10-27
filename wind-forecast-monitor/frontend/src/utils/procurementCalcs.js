@@ -173,6 +173,9 @@ export function processProcurementPlan(intervals, bias = 0) {
   const otherVals    = complete.map((r) => r.other);
   const reqVals      = complete.map((r) => r.requirement);
   const surplusVals  = complete.map((r) => r.surplus);
+  const residualVals = complete.map((r) => r.residual);
+
+  const netResidualMWh = calcMWh(residualVals);
 
   return {
     intervals: processed,
@@ -183,6 +186,9 @@ export function processProcurementPlan(intervals, bias = 0) {
       totalOtherMWh:         calcMWh(otherVals),
       totalRequirementMWh:   calcMWh(reqVals),
       totalSurplusMWh:       calcMWh(surplusVals),
+      netResidualMWh,
+      netRequirementMWh:     Math.max(netResidualMWh, 0),
+      netSurplusMWh:         Math.max(-netResidualMWh, 0),
       nComplete,
       nMissingDemand,
       nMissingWind,
