@@ -7,10 +7,16 @@ This repository implements a full stack solution:
 - Python FastAPI backend for BMRS ingestion, filtering, validation, metrics, caching, and API exposure
 - React frontend for operational dashboarding, charts, and procurement planning
 - Docker Compose setup for local execution
-- analysis notebook for exploratory model work
 - client-facing guide in [USER_GUIDE.md](USER_GUIDE.md)
 
 This project was developed with the support of Claude AI and Antigravity IDE to accelerate architecture work, logic refinement, code quality review, and documentation cleanup.
+
+## Live demo
+
+https://finalsubmissionfffffh.vercel.app/
+
+> The backend runs on a free tier, so the first request after inactivity can take
+> 20-30 seconds to wake up. Click "Load Data" once and wait; later requests are fast.
 
 ---
 
@@ -181,8 +187,6 @@ wind-forecast-monitor/
 │           ├── procurementCalcs.js
 │           └── procurementCalcs.test.js
 │
-├── analysis/
-│   └── forecast_analysis.ipynb
 ├── docker-compose.yml
 ├── LICENSE
 ├── README.md
